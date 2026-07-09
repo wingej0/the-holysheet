@@ -11,6 +11,8 @@ import logging
 
 import pandas as pd
 
+from transform._ranking import add_rank_and_quartile
+
 
 # ---------------------------------------------------------------------------
 # Column selection
@@ -142,40 +144,6 @@ SCHOOL_NAME_MAP = {
 _RANK_GROUP_COLS = ["school_year", "benchmark_period", "school_name", "grade"]
 
 
-def _add_rank_and_quartile(df: pd.DataFrame, score_col: str, name: str) -> pd.DataFrame:
-    """
-    Add class rank and quartile for a composite score column, calculated
-    within each school_year / benchmark_period / school_name / grade group.
-
-    Rank 1 = highest score. Quartile 4 = top 25%.
-    Students with no score receive NaN for both.
-
-    Args:
-        score_col: Column to rank on (e.g. 'reading_composite_score')
-        name:      Prefix for output columns (e.g. 'reading_composite')
-    """
-    rank_col = f"{name}_class_rank"
-    quartile_col = f"{name}_quartile"
-
-    df[rank_col] = (
-        df.groupby(_RANK_GROUP_COLS)[score_col]
-        .rank(method="min", ascending=False, na_option="keep")
-        .astype("Int64")
-    )
-
-    pct_rank = df.groupby(_RANK_GROUP_COLS)[score_col].rank(
-        pct=True, ascending=False, na_option="keep"
-    )
-    df[quartile_col] = pd.cut(
-        pct_rank,
-        bins=[0, 0.25, 0.5, 0.75, 1.0],
-        labels=[4, 3, 2, 1],
-        include_lowest=True,
-    ).astype("Int64")
-
-    return df
-
-
 def transform(raw: pd.DataFrame) -> dict[str, pd.DataFrame]:
     """
     Transform the raw Acadience export into warehouse-ready DataFrames.
@@ -274,8 +242,12 @@ def transform(raw: pd.DataFrame) -> dict[str, pd.DataFrame]:
     # -----------------------------------------------------------------------
     # 7. Add class rank and quartile for composite scores
     # -----------------------------------------------------------------------
-    reading = _add_rank_and_quartile(reading, "reading_composite_score", "reading_composite")
-    math = _add_rank_and_quartile(math, "math_composite_score", "math_composite")
+    reading = add_rank_and_quartile(
+        reading, "reading_composite_score", "reading_composite", _RANK_GROUP_COLS
+    )
+    math = add_rank_and_quartile(
+        math, "math_composite_score", "math_composite", _RANK_GROUP_COLS
+    )
 
     logger.info(
         f"Transformed {len(reading)} reading rows, {len(math)} math rows "
