@@ -238,3 +238,10 @@ SQL_SERVER = SqlServerSettings(
     user=os.environ["SQL_USERNAME"],
     password=os.environ["SQL_PASSWORD"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Google
+# ---------------------------------------------------------------------------
+
+GOOGLE_SERVICE_ACCOUNT_PATH = os.environ["GOOGLE_SERVICE_ACCOUNT_PATH"]
