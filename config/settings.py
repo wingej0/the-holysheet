@@ -8,6 +8,7 @@ Usage:
 
 import os
 from dataclasses import dataclass, field
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 
@@ -210,3 +211,30 @@ def acadience_pm_export_url(year: str) -> str:
         f"{_ACADIENCE_BASE_URL}/api/districts/{_ACADIENCE_DISTRICT_ID}"
         f"/y/{year}/export-student-data/COMBINED_ENGLISH_K12_PM"
     )
+
+
+# ---------------------------------------------------------------------------
+# SQL Server (Aspire backing database)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SqlServerSettings:
+    server: str
+    database: str
+    user: str
+    password: str
+
+    @property
+    def url(self) -> str:
+        return (
+            f"mssql+pymssql://{quote_plus(self.user)}:{quote_plus(self.password)}"
+            f"@{self.server}/{self.database}?charset=utf8"
+        )
+
+
+SQL_SERVER = SqlServerSettings(
+    server=os.environ["SQL_SERVER"],
+    database=os.environ["SQL_DATABASE"],
+    user=os.environ["SQL_USERNAME"],
+    password=os.environ["SQL_PASSWORD"],
+)
