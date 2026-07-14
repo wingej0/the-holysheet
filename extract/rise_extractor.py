@@ -93,10 +93,15 @@ def extract(years: list[str] | None = None) -> dict[str, pd.DataFrame]:
 
             # Rename grade-specific columns to subject-level names so rows
             # from all grades can be concatenated into one DataFrame.
+            # Writing's overall score column is named "Score" in most years but
+            # "Scale Score" in 20-21 — normalize both to "Writing Score" below.
             df = df.rename(columns={
                 f"Summative: {title} Scale Score": f"{subject} Scale Score",
+                f"Summative: {title} Score": f"{subject} Score",
                 f"Summative: {title} Performance": f"{subject} Performance",
             })
+            if subject == "Writing" and "Writing Scale Score" in df.columns:
+                df = df.rename(columns={"Writing Scale Score": "Writing Score"})
 
             df["school_year"] = year
             subject_frames[subject.lower()].append(df)
