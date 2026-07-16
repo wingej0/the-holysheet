@@ -76,14 +76,17 @@ def transform(raw: pd.DataFrame) -> dict[str, pd.DataFrame]:
     df = df.drop_duplicates(subset=pk, keep="first").reset_index(drop=True)
 
     # Rank and quartile on index_score — Quartile 4 = top 25%
+    # TOSCRF has a single score column, so the warehouse schema uses bare
+    # class_rank/quartile names rather than the helper's {name}_ prefix.
     df = add_rank_and_quartile(df, "index_score", "index", _RANK_GROUP_COLS)
+    df = df.rename(columns={"index_class_rank": "class_rank", "index_quartile": "quartile"})
 
     # Final column order
     df = df[[
         "local_id", "school_year", "assessment_window", "school_name", "grade",
         "form", "test_date", "raw_score", "age", "age_equivalent",
         "grade_equivalent", "percentile_rank", "index_score",
-        "descriptive_term", "index_class_rank", "index_quartile",
+        "descriptive_term", "class_rank", "quartile",
     ]]
 
     logger.info(

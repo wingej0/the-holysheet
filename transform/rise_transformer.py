@@ -1,7 +1,8 @@
 """
 RISE transformer — standardizes column names, converts performance levels
-to numeric, computes class rank and quartile within school/grade groups,
-and returns one warehouse-ready DataFrame per subject.
+to numeric, computes class rank and quartile within school/grade groups
+(ELA/Math/Science only — not Writing), and returns one warehouse-ready
+DataFrame per subject.
 
 Input:  dict[str, pd.DataFrame] from rise_extractor.extract()
 Output: dict with keys 'ela', 'math', 'science', 'writing'
@@ -162,6 +163,7 @@ def _process(
     score_col: str | None,
     label: str,
     logger: logging.Logger,
+    compute_rank: bool = True,
 ) -> pd.DataFrame:
     # Select only columns present in this file (subdomain columns vary by grade)
     cols_to_keep = [c for c in rename_map if c in df.columns]
@@ -202,8 +204,12 @@ def _process(
         if col not in non_numeric:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    if score_col and score_col in df.columns:
+    if compute_rank and score_col and score_col in df.columns:
         df = add_rank_and_quartile(df, score_col, label.lower(), _RANK_GROUP_COLS)
+        df = df.rename(columns={
+            f"{label.lower()}_class_rank": "class_rank",
+            f"{label.lower()}_quartile": "quartile",
+        })
 
     logger.info(
         f"{label}: {len(df)} rows "
@@ -234,6 +240,8 @@ def transform(raw: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
         result["science"] = _process(raw["science"], SCIENCE_RENAME, "scale_score", "Science", logger)
     if "writing" in raw:
         writing_raw = _normalize_writing_prompts(raw["writing"])
-        result["writing"] = _process(writing_raw, WRITING_RENAME, "writing_score", "Writing", logger)
+        result["writing"] = _process(
+            writing_raw, WRITING_RENAME, "writing_score", "Writing", logger, compute_rank=False
+        )
 
     return result
