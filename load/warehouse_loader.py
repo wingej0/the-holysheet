@@ -52,6 +52,13 @@ def load(raw: pd.DataFrame, transformed: dict[str, pd.DataFrame]) -> None:
         # 1. Staging snapshot — full raw export with timestamp
         # -------------------------------------------------------------------
         snapshot = raw.copy()
+        # Aspire sometimes exports blank fields as a literal " " instead of
+        # empty — normalize to NaN so numeric-typed staging columns (zip,
+        # phone) don't fail to cast on insert.
+        obj_cols = snapshot.select_dtypes(include="object").columns
+        snapshot[obj_cols] = snapshot[obj_cols].apply(
+            lambda col: col.where(col.astype(str).str.strip() != "", None)
+        )
         snapshot["snapshot_at"] = started_at
         snapshot.to_sql(
             "sis_students",
@@ -868,32 +875,28 @@ def _ensure_tables(conn) -> None:
     conn.execute(text("""
         CREATE TABLE IF NOT EXISTS warehouse.dim_homeroom (
             local_id            INTEGER  NOT NULL,
-            school_year         INTEGER  NOT NULL,
             ssid                BIGINT,
             school_id           INTEGER,
             school_abbrev       TEXT,
             homeroom_course     TEXT,
             homeroom_teacher    TEXT,
-            PRIMARY KEY (local_id, school_year)
+            PRIMARY KEY (local_id)
         )
     """))
-    # Migration: add school_year to pre-existing single-PK tables
-    conn.execute(text("""
-        ALTER TABLE warehouse.dim_homeroom
-            ADD COLUMN IF NOT EXISTS school_year INTEGER NOT NULL DEFAULT 2026
-    """))
+    # Migration: homeroom is a current-state snapshot, not longitudinal —
+    # drop school_year if a prior version of this script added it.
     conn.execute(text("""
         DO $$
         BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM pg_constraint
-                WHERE conname = 'dim_homeroom_pkey'
-                  AND contype = 'p'
-                  AND conrelid = 'warehouse.dim_homeroom'::regclass
-                  AND array_length(conkey, 1) = 2
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'warehouse'
+                  AND table_name = 'dim_homeroom'
+                  AND column_name = 'school_year'
             ) THEN
                 ALTER TABLE warehouse.dim_homeroom DROP CONSTRAINT IF EXISTS dim_homeroom_pkey;
-                ALTER TABLE warehouse.dim_homeroom ADD PRIMARY KEY (local_id, school_year);
+                ALTER TABLE warehouse.dim_homeroom DROP COLUMN school_year;
+                ALTER TABLE warehouse.dim_homeroom ADD PRIMARY KEY (local_id);
             END IF;
         END $$
     """))
@@ -1341,7 +1344,7 @@ def load_homeroom(transformed: dict[str, pd.DataFrame]) -> None:
             _ensure_schemas(conn)
             _ensure_tables(conn)
 
-        _upsert_composite(df=df, table="dim_homeroom", schema="warehouse", pk=["local_id", "school_year"])
+        _upsert_composite(df=df, table="dim_homeroom", schema="warehouse", pk=["local_id"])
         logger.info(f"Upserted {len(df)} rows into warehouse.dim_homeroom")
 
     except Exception as exc:
@@ -1457,6 +1460,9 @@ def _upsert(df: pd.DataFrame, table: str, schema: str, pk: str) -> None:
     Write df to a temporary table, then INSERT ... ON CONFLICT DO UPDATE
     into the target table. Drops the temp table when done.
     """
+    if df.empty:
+        return
+
     tmp = f"_tmp_{table}"
     df.to_sql(tmp, engine, schema="staging", if_exists="replace", index=False)
 
@@ -1480,6 +1486,9 @@ def _upsert_composite(
     """
     Like _upsert but for tables with a composite primary key.
     """
+    if df.empty:
+        return
+
     tmp = f"_tmp_{table}"
     df.to_sql(tmp, engine, schema="staging", if_exists="replace", index=False)
 

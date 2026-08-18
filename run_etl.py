@@ -65,8 +65,8 @@ logger = logging.getLogger("run_etl")
 #   Double-check this value before the first run of a new school year; ALO
 #   may not create the new year's code until enrollment opens.
 # ---------------------------------------------------------------------------
-CURRENT_SCHOOL_YEAR = 2026
-ACADIENCE_YEAR_CODE = "25"
+CURRENT_SCHOOL_YEAR = 2027
+ACADIENCE_YEAR_CODE = "26"
 
 
 def run_sis() -> None:

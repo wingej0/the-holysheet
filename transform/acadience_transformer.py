@@ -174,8 +174,11 @@ def transform(raw: pd.DataFrame) -> dict[str, pd.DataFrame]:
     # -----------------------------------------------------------------------
     # 2b. Drop rows with no school name — can't link to a school
     # -----------------------------------------------------------------------
-    no_school = (df["School Name"].isna() | (df["School Name"].str.strip() == "")).sum()
-    df = df[df["School Name"].notna() & (df["School Name"].str.strip() != "")].copy()
+    # fillna+astype first: an all-NaN "School Name" column (e.g. no students
+    # assessed yet this year) is inferred as float64, which has no .str accessor
+    school_name = df["School Name"].fillna("").astype(str).str.strip()
+    no_school = (school_name == "").sum()
+    df = df[school_name != ""].copy()
     if no_school:
         logger.warning(f"Dropped {no_school} rows with blank school name")
 
