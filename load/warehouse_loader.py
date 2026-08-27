@@ -19,7 +19,7 @@ import logging
 from datetime import datetime, timezone
 
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from utils.db import engine
 
@@ -80,6 +80,16 @@ def load(raw: pd.DataFrame, transformed: dict[str, pd.DataFrame]) -> None:
         # -------------------------------------------------------------------
         _upsert(df=students, table="dim_students", schema="warehouse", pk="local_id")
         logger.info(f"Upserted {len(students)} rows into warehouse.dim_students")
+
+        # -------------------------------------------------------------------
+        # 4. Close out students no longer in the extract. Aspire's export
+        # filter (IncludeExited=false) drops graduated/withdrawn students
+        # from the roster entirely rather than tagging them with an
+        # exit_code, so the upsert above never touches their row — without
+        # this they'd stay is_active = TRUE forever.
+        # -------------------------------------------------------------------
+        closed = _close_out_missing_students(current_local_ids=students["local_id"].tolist())
+        logger.info(f"Marked {closed} students inactive (no longer in Aspire extract)")
 
     except Exception as exc:
         status = "failure"
@@ -1453,6 +1463,31 @@ def load_act(transformed: dict[str, pd.DataFrame]) -> None:
             error_message=error_message,
             started_at=started_at,
         )
+
+
+def _close_out_missing_students(current_local_ids: list[int]) -> int:
+    """
+    Mark warehouse.dim_students rows inactive for any local_id that is
+    currently active but absent from this run's Aspire extract (graduated
+    or withdrawn students that Aspire's IncludeExited=false filter drops
+    from the roster rather than tagging with an exit_code).
+
+    Returns the number of rows closed out.
+    """
+    if not current_local_ids:
+        return 0
+
+    with engine.begin() as conn:
+        result = conn.execute(
+            text("""
+                UPDATE warehouse.dim_students
+                SET is_active = FALSE
+                WHERE is_active = TRUE
+                  AND local_id NOT IN :current_ids
+            """).bindparams(bindparam("current_ids", expanding=True)),
+            {"current_ids": current_local_ids},
+        )
+        return result.rowcount
 
 
 def _upsert(df: pd.DataFrame, table: str, schema: str, pk: str) -> None:
