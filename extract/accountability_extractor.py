@@ -10,10 +10,9 @@ EL Progress 13 / Grad Rate 25 / ACT 25 / Advanced Coursework 25) — that's
 what this extractor covers. Years before 2021-22 use incompatible schemas
 and are out of scope.
 
-Scoped to San Juan School District (USBE LEA ID 880) only: district rank
-only ever needs San Juan's own schools, and the statewide rank is already a
-precomputed number in each year's rank-list file, so there's no need to
-pull in the other ~950 statewide schools' rows.
+Rows are filtered to San Juan School District (USBE LEA ID 880), but the
+student-group and rank-list sheets are also returned unfiltered (statewide)
+because comparable-schools matching needs peer schools from other districts.
 
 Filenames/sheet names are not a predictable pattern across years (USBE
 renames its exports each year), so each year's sources are listed
@@ -68,18 +67,80 @@ YEAR_SOURCES = {
         "csi_exit": ("24CSI.xlsx", "CSI Exit"),
         "rank_list": ("24RankList.xlsx", "All Schools Rank List"),
     },
+    2026: {
+        "student_groups": ("25StudentGroupAccountability.xlsx", "Student Groups"),
+        "tsi": ("25StudentGroupAccountability.xlsx", "TSI"),
+        "atsi": ("25StudentGroupAccountability.xlsx", "ATSI"),
+        "tsi_exit": ("25StudentGroupAccountability.xlsx", "TSI Exit"),
+        "atsi_exit": ("25StudentGroupAccountability.xlsx", "ATSI Exit"),
+        "csi": ("25CSI.xlsx", "Low Performing Student Groups"),
+        "csi_exit": ("25CSI.xlsx", "CSI Exit"),
+        "rank_list": ("25AllSchoolsRankList.xlsx", "All Schools Rank List"),
+    },
 }
+
+# Starting with 2025-26, USBE switched from CamelCase headers ("SchoolYear",
+# "DistrictID", "StudentGroupsCode") to spaced ones ("School Year",
+# "District ID", "Student Groups Code"). For those years, spaces are
+# collapsed so every year reaches the transformer under the same names —
+# except headers that were already spaced in earlier years, which kept the
+# same spelling and are listed per source key here. Which headers are
+# spaced differs by sheet ("Total Indicators" in the rank list vs
+# "TotalIndicators" in Student Groups), hence per-key rather than global.
+SPACED_HEADER_YEARS = {2026}
+_ALREADY_SPACED_HEADERS = {
+    "student_groups": {
+        "Achievement Points (56 Points)",
+        "Growth Points (56 Points)",
+        "Lowest Quartile Points (25 Points)",
+        "EL Progress Points (13 Points)",
+        "Graduation Rate Points (25 Points)",
+        "ACT Points (25 Points)",
+        "Advanced Coursework Points (25 Points)",
+    },
+    "tsi": {"LEA ID"},
+    "atsi": {"LEA ID"},
+    "tsi_exit": {"LEA ID"},
+    "atsi_exit": {"LEA ID"},
+    "csi": {"LEA ID"},
+    "csi_exit": {"LEA ID"},
+    "rank_list": {
+        "Post Secondary Readiness Points",
+        "Post Secondary Readiness Score",
+        "Total Indicators",
+        "Percent RANKING",
+        "Bottom 5% Flag",
+    },
+}
+# 2025-26's ATSI sheet has its student-group-code header truncated to
+# "Student  " (values are the usual SWD/ELL/EDA/... codes).
+_HEADER_FIXES = {"Student": "StudentGroupsCode"}
 
 
 class AccountabilityExtractError(Exception):
     pass
 
 
-def _read_sheet(fname: str, sheet: str) -> pd.DataFrame:
+def _collapse_header_spaces(df: pd.DataFrame, key: str) -> pd.DataFrame:
+    keep = _ALREADY_SPACED_HEADERS.get(key, set())
+
+    def fix(col: str) -> str:
+        col = str(col).strip()
+        if col in _HEADER_FIXES:
+            return _HEADER_FIXES[col]
+        return col if col in keep else col.replace(" ", "")
+
+    return df.rename(columns=fix)
+
+
+def _read_sheet(school_year: int, key: str, fname: str, sheet: str) -> pd.DataFrame:
     path = ACCOUNTABILITY_DATA_DIR / fname
     if not path.exists():
         raise AccountabilityExtractError(f"Accountability file not found: {path}")
-    return pd.read_excel(path, sheet_name=sheet, engine="openpyxl")
+    df = pd.read_excel(path, sheet_name=sheet, engine="openpyxl")
+    if school_year in SPACED_HEADER_YEARS:
+        df = _collapse_header_spaces(df, key)
+    return df
 
 
 def _filter_student_groups(df: pd.DataFrame) -> pd.DataFrame:
@@ -106,7 +167,7 @@ def extract() -> dict[int, dict]:
             'tsi' / 'atsi'    — raw rows for groups currently identified as
                                  TSI/ATSI, for San Juan District (only
                                  present for years with separate TSI/ATSI
-                                 sheets — 2024 and 2025)
+                                 sheets — 2024 onward)
             'tsi_exit' / 'atsi_exit' — raw rows for groups that exited
                                  TSI/ATSI that year, for San Juan District
                                  (same year coverage as 'tsi'/'atsi')
@@ -140,7 +201,7 @@ def extract() -> dict[int, dict]:
         year_data: dict = {}
 
         sg_file, sg_sheet = sources["student_groups"]
-        student_groups_raw = _read_sheet(sg_file, sg_sheet)
+        student_groups_raw = _read_sheet(school_year, "student_groups", sg_file, sg_sheet)
         year_data["student_groups"] = _filter_student_groups(student_groups_raw)
         # Kept unfiltered (statewide) so comparable-schools peers (which are
         # outside San Juan District) can get the same subgroup point
@@ -161,11 +222,11 @@ def extract() -> dict[int, dict]:
         for key in ("tsi", "atsi", "tsi_exit", "atsi_exit", "csi", "csi_exit"):
             if key in sources:
                 fname, sheet = sources[key]
-                df = _read_sheet(fname, sheet)
+                df = _read_sheet(school_year, key, fname, sheet)
                 year_data[key] = df[df["LEA ID"] == HOME_LEA_ID].copy()
 
         rank_file, rank_sheet = sources["rank_list"]
-        rank_list = _read_sheet(rank_file, rank_sheet)
+        rank_list = _read_sheet(school_year, "rank_list", rank_file, rank_sheet)
         year_data["total_ranked"] = len(rank_list)
         year_data["rank_list"] = rank_list[rank_list["DistrictID"] == HOME_LEA_ID].copy()
         # Kept unfiltered (statewide) for comparable-schools matching, which

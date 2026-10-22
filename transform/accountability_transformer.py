@@ -190,10 +190,10 @@ def _normalize_modern(
     csi: pd.DataFrame,
     csi_exit: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Shared normalizer for 2023-24 and 2024-25, whose 'Student Groups' /
+    """Shared normalizer for 2023-24 onward, whose 'Student Groups' /
     'TSI' / 'ATSI' / 'TSI Exit' / 'ATSI Exit' sheets share an identical
     schema. CSI (Low Performing Student Groups) exit targets come from a
-    separate file (23CSI.xlsx / 24CSI.xlsx) but the same 'ExitTarget'
+    separate file (e.g. 24CSI.xlsx) but the same 'ExitTarget'
     column shape, so they fold into the same lookup."""
     exit_targets = _exit_target_lookup(tsi, atsi, tsi_exit, atsi_exit, csi, csi_exit)
 
@@ -399,7 +399,7 @@ def _normalize_student_groups(school_year: int, year_data: dict, key: str) -> pd
     Dispatch to the right per-year normalizer for whichever student-groups
     frame is requested via `key` ('student_groups' for the San
     Juan-filtered rows, 'student_groups_statewide' for every school that
-    year). The TSI/ATSI/CSI exit-target sheets used for 2024/2025 are
+    year). The TSI/ATSI/CSI exit-target sheets used for 2024 onward are
     always San Juan-filtered regardless of `key` — harmless for statewide
     rows, since a peer school's SchoolID just won't match anything in a
     San Juan-only sheet, leaving that peer's exit_target null (status,
@@ -411,7 +411,7 @@ def _normalize_student_groups(school_year: int, year_data: dict, key: str) -> pd
         return _normalize_2022(student_groups)
     if school_year == 2023:
         return _normalize_2023(student_groups)
-    if school_year in (2024, 2025):
+    if school_year >= 2024:
         return _normalize_modern(
             student_groups,
             year_data.get("tsi", pd.DataFrame()),
