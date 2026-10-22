@@ -1014,6 +1014,86 @@ def _ensure_tables(conn) -> None:
         )
     """))
 
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS warehouse.fact_accountability_student_groups (
+            school_year             INTEGER NOT NULL,
+            school_id               INTEGER NOT NULL,
+            school_number           INTEGER,
+            school_name             TEXT,
+            school_type             TEXT,
+            student_group_code      TEXT    NOT NULL,
+            status                  TEXT,
+            year_identified         TEXT,
+            exit_description        TEXT,
+            exit_year               TEXT,
+            exit_target             NUMERIC,
+            achievement_points      NUMERIC,
+            growth_points           NUMERIC,
+            lq_points               NUMERIC,
+            el_points               NUMERIC,
+            grad_points             NUMERIC,
+            act_points              NUMERIC,
+            adv_points              NUMERIC,
+            total_indicators        SMALLINT,
+            total_score             NUMERIC,
+            total_possible          NUMERIC,
+            overall_total_percent   NUMERIC,
+            PRIMARY KEY (school_year, school_id, student_group_code)
+        )
+    """))
+
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS warehouse.fact_accountability_school_rank (
+            school_year             INTEGER NOT NULL,
+            school_id               INTEGER NOT NULL,
+            school_number           INTEGER,
+            school_name             TEXT,
+            school_type             TEXT,
+            total_enrollment        INTEGER,
+            total_score             NUMERIC,
+            total_possible          NUMERIC,
+            overall_total_percent   NUMERIC,
+            ranking                 INTEGER,
+            total_ranked_statewide  INTEGER,
+            PRIMARY KEY (school_year, school_id)
+        )
+    """))
+
+    # Peers are matched per (school_year, school_id, student_group_code) —
+    # not just per school — because subgroup composition (e.g. American
+    # Indian/Alaska Native enrollment) is geographically concentrated in
+    # Utah, so whole-school matching alone can surface "similar" schools
+    # that don't serve that subgroup at all. The matched peer row already
+    # carries the full points breakdown (achievement/act/el/growth/grad/
+    # adv/lq), so this is the only comparable-schools table needed.
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS warehouse.fact_accountability_comparable_schools (
+            school_year                  INTEGER  NOT NULL,
+            school_id                    INTEGER  NOT NULL,
+            school_name                  TEXT,
+            student_group_code           TEXT     NOT NULL,
+            peer_rank                    SMALLINT NOT NULL,
+            peer_school_id                INTEGER,
+            peer_school_name             TEXT,
+            peer_lea_name                 TEXT,
+            peer_school_type             TEXT,
+            peer_total_enrollment         INTEGER,
+            peer_status                   TEXT,
+            peer_achievement_points       NUMERIC,
+            peer_growth_points            NUMERIC,
+            peer_lq_points                 NUMERIC,
+            peer_el_points                 NUMERIC,
+            peer_grad_points               NUMERIC,
+            peer_act_points                NUMERIC,
+            peer_adv_points                NUMERIC,
+            peer_total_score               NUMERIC,
+            peer_total_possible            NUMERIC,
+            peer_overall_total_percent    NUMERIC,
+            match_distance                NUMERIC,
+            PRIMARY KEY (school_year, school_id, student_group_code, peer_rank)
+        )
+    """))
+
     # ------------------------------------------------------------------
     # Superset views — normalize benchmark + PM data for line charts.
     # Schema: (ssid, student_name, school_year, assessment_date, measure,
@@ -1286,6 +1366,63 @@ def _ensure_tables(conn) -> None:
         WHERE s.is_active = TRUE
     """))
 
+    conn.execute(text("""
+        CREATE OR REPLACE VIEW warehouse.v_accountability_dashboard AS
+        SELECT
+            sg.school_year,
+            sg.school_id,
+            sg.school_name,
+            sg.school_type,
+            sg.student_group_code,
+            CASE sg.student_group_code
+                WHEN 'ALL' THEN 'All Students'
+                WHEN 'EDA' THEN 'Economically Disadvantaged'
+                WHEN 'ELL' THEN 'English Language Learner'
+                WHEN 'SWD' THEN 'Students with Disabilities'
+                WHEN 'AM7' THEN 'American Indian/Alaska Native'
+                WHEN 'AS7' THEN 'Asian'
+                WHEN 'BL7' THEN 'Black/African American'
+                WHEN 'HI7' THEN 'Hispanic'
+                WHEN 'MU7' THEN 'Two or More Races'
+                WHEN 'PI7' THEN 'Pacific Islander'
+                WHEN 'WH7' THEN 'White'
+                ELSE sg.student_group_code
+            END AS student_group_description,
+            sg.overall_total_percent AS score,
+            RANK() OVER (
+                PARTITION BY sg.school_year, sg.student_group_code
+                ORDER BY sg.overall_total_percent DESC
+            ) AS district_rank,
+            COUNT(*) OVER (
+                PARTITION BY sg.school_year, sg.student_group_code
+            ) AS district_rank_total,
+            sg.status,
+            sg.exit_target,
+            sg.exit_description,
+            sg.year_identified,
+            sg.exit_year,
+            sg.achievement_points,
+            sg.growth_points,
+            sg.lq_points,
+            sg.el_points,
+            sg.grad_points,
+            sg.act_points,
+            sg.adv_points,
+            sg.total_score AS points_earned,
+            sg.total_possible AS points_possible,
+            CASE WHEN sg.exit_target IS NOT NULL
+                 THEN ROUND((sg.exit_target - sg.overall_total_percent) * 100, 2)
+            END AS pct_needed,
+            CASE WHEN sg.exit_target IS NOT NULL
+                 THEN ROUND((sg.exit_target - sg.overall_total_percent) * sg.total_possible, 2)
+            END AS points_needed,
+            sr.ranking AS usbe_rank,
+            sr.total_ranked_statewide AS usbe_rank_total
+        FROM warehouse.fact_accountability_student_groups sg
+        LEFT JOIN warehouse.fact_accountability_school_rank sr
+            ON sr.school_year = sg.school_year AND sr.school_id = sg.school_id
+    """))
+
 
 def load_toscrf(transformed: dict[str, pd.DataFrame]) -> None:
     """
@@ -1459,6 +1596,83 @@ def load_act(transformed: dict[str, pd.DataFrame]) -> None:
         _log_run(
             source="act",
             row_count=len(df),
+            status=status,
+            error_message=error_message,
+            started_at=started_at,
+        )
+
+
+def load_accountability(transformed: dict[str, pd.DataFrame]) -> None:
+    """
+    Persist transformed USBE school-accountability data to PostgreSQL.
+
+    Load strategy: upsert fact_accountability_student_groups by
+    (school_year, school_id, student_group_code),
+    fact_accountability_school_rank by (school_year, school_id), and
+    fact_accountability_comparable_schools by
+    (school_year, school_id, student_group_code, peer_rank).
+
+    Args:
+        transformed: Dict with keys 'student_groups', 'school_rank', and
+            'comparable_schools' from accountability_transformer.transform().
+    """
+    logger = logging.getLogger(__name__)
+    started_at = datetime.now(timezone.utc)
+    status = "success"
+    error_message = None
+
+    student_groups = transformed.get("student_groups", pd.DataFrame())
+    school_rank = transformed.get("school_rank", pd.DataFrame())
+    comparable_schools = transformed.get("comparable_schools", pd.DataFrame())
+
+    try:
+        with engine.begin() as conn:
+            _ensure_schemas(conn)
+            _ensure_tables(conn)
+
+        _upsert_composite(
+            df=student_groups,
+            table="fact_accountability_student_groups",
+            schema="warehouse",
+            pk=["school_year", "school_id", "student_group_code"],
+        )
+        logger.info(
+            f"Upserted {len(student_groups)} rows into "
+            "warehouse.fact_accountability_student_groups"
+        )
+
+        _upsert_composite(
+            df=school_rank,
+            table="fact_accountability_school_rank",
+            schema="warehouse",
+            pk=["school_year", "school_id"],
+        )
+        logger.info(
+            f"Upserted {len(school_rank)} rows into "
+            "warehouse.fact_accountability_school_rank"
+        )
+
+        _upsert_composite(
+            df=comparable_schools,
+            table="fact_accountability_comparable_schools",
+            schema="warehouse",
+            pk=["school_year", "school_id", "student_group_code", "peer_rank"],
+        )
+        logger.info(
+            f"Upserted {len(comparable_schools)} rows into "
+            "warehouse.fact_accountability_comparable_schools"
+        )
+
+    except Exception as exc:
+        status = "failure"
+        error_message = str(exc)
+        logger.error(f"Accountability load failed: {exc}")
+        raise
+
+    finally:
+        _log_run(
+            source="accountability",
+            row_count=(len(student_groups) + len(school_rank) + len(comparable_schools)),
             status=status,
             error_message=error_message,
             started_at=started_at,

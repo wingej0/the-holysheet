@@ -25,6 +25,7 @@ import sys
 from extract import (
     acadience_extractor,
     acadience_pm_extractor,
+    accountability_extractor,
     act_extractor,
     aspire_plus_extractor,
     attendance_extractor,
@@ -38,6 +39,7 @@ from extract import (
 from transform import (
     acadience_pm_transformer,
     acadience_transformer,
+    accountability_transformer,
     act_transformer,
     aspire_plus_transformer,
     attendance_transformer,
@@ -135,6 +137,12 @@ def run_toscrf() -> None:
     wl.load_toscrf(transformed)
 
 
+def run_accountability() -> None:
+    raw = accountability_extractor.extract()
+    transformed = accountability_transformer.transform(raw)
+    wl.load_accountability(transformed)
+
+
 # Order matters only for readability here — each load_* call provisions its
 # own schemas/tables and there are no cross-source dependencies at run time.
 SOURCES = {
@@ -149,6 +157,7 @@ SOURCES = {
     "aspire_plus": run_aspire_plus,
     "rise": run_rise,
     "toscrf": run_toscrf,
+    "accountability": run_accountability,
 }
 
 
