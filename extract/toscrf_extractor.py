@@ -14,7 +14,7 @@ import pandas as pd
 
 from config.settings import GOOGLE_SERVICE_ACCOUNT_PATH
 
-YEARS = ["24-25", "25-26"]
+YEARS = ["24-25", "25-26", "26-27"]
 WINDOWS = ["BOY", "MOY", "EOY"]
 
 
