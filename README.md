@@ -2,7 +2,14 @@
   <img src="assets/holysheet_logo.jpeg" alt="the-holysheet logo: a spreadsheet with a halo and an upward trend arrow" width="240">
 </p>
 
-# the-holysheet
+<p align="center">
+  <a href="https://github.com/wingej0/the-holysheet/commits/main"><img src="https://img.shields.io/github/last-commit/wingej0/the-holysheet" alt="Last commit"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/wingej0/the-holysheet" alt="License"></a>
+  <img src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/PostgreSQL-warehouse-336791?logo=postgresql&logoColor=white" alt="PostgreSQL">
+</p>
+
+# The Holysheet
 
 A nightly ETL pipeline that pulls student, enrollment, attendance, and assessment data out of the systems a Utah school district already uses and loads it into one PostgreSQL data warehouse. Once the data is in the warehouse, dashboards (we use Apache Superset) can join assessments to demographics, enrollment, and homerooms without anyone exporting and merging spreadsheets by hand.
 
